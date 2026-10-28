@@ -876,14 +876,7 @@ bool check_baby_info(
     Pokemon::StatsHuntAction& action
 ){
     context.wait_for_all_requests();
-
-    Language language = LANGUAGE;
-    if (language == Language::None){
-        change_view_to_stats_or_judge(stream, context);
-    }else{
-        change_view_to_judge(stream, context, language);
-    }
-
+    change_view_to_stats_or_judge(stream, context);
     VideoOverlaySet overlay_set(stream.overlay());
 
     BoxShinyWatcher shiny_detector;
