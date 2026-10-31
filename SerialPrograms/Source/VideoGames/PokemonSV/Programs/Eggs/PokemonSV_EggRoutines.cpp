@@ -8,7 +8,6 @@
 #include "CommonFramework/Exceptions/OperationFailedExceptionWithScreenshot.h"
 #include "CommonFramework/Notifications/ProgramNotifications.h"
 #include "CommonFramework/VideoPipeline/VideoFeed.h"
-#include "CommonFramework/VideoPipeline/VideoOverlay.h"
 #include "CommonFramework/Tools/ErrorDumper.h"
 #include "CommonFramework/Tools/ProgramEnvironment.h"
 #include "CommonTools/Options/LanguageOCROption.h"
@@ -881,7 +880,7 @@ bool check_baby_info(
     //  judge in the game, and those who don't filter on IVs may not have it. Shininess,
     //  gender and nature can all be read from the plain stats screen.
     Language language = LANGUAGE;
-    const bool read_ivs = language != Language::None && FILTERS.uses_ivs();
+    const bool read_ivs = language != Language::None && FILTERS.require_iv_judge();
     if (read_ivs){
         change_view_to_judge(stream, context, language);
     }else{

@@ -254,7 +254,7 @@ StatsHuntAction StatsHuntIvJudgeFilterTable::get_action(
     }
     return action;
 }
-bool StatsHuntIvJudgeFilterTable::uses_ivs() const{
+bool StatsHuntIvJudgeFilterTable::require_iv_judge() const{
     std::vector<std::unique_ptr<StatsHuntIvJudgeFilterRow>> list = copy_snapshot();
     for (const std::unique_ptr<StatsHuntIvJudgeFilterRow>& filter : list){
         const IvJudgeFilter ivs[] = {
