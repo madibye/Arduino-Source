@@ -5,8 +5,10 @@
  */
 
 #include "Common/Cpp/ListenerSet.h"
+#include "Common/Cpp/MoveOnlyFunction_Tests.h"
 #include "Common/Cpp/ScopeExit.h"
 #include "Common/Cpp/PrettyPrint.h"
+#include "Common/Cpp/Sockets/Sockets_Tests.h"
 #include "Common/Cpp/TestRunners/TestImageDistortionManager.h"
 #include "Common/Cpp/TestRunners/UnitTestDatabase.h"
 #include "Common/Qt/QtThreadPool_Tests.h"
@@ -49,8 +51,10 @@ UnitTestDatabase make_UNIT_TESTS_ALL(){
     UnitTestDatabase ret;
 
     add_tests_QtEventThreadPool(ret, GlobalThreadPools::computation_normal());
+    add_tests_Sockets(ret, GlobalThreadPools::unlimited_normal());
     add_tests_BlackBorderDetector(ret);
     add_tests_ListenerSet(ret);
+    add_tests_MoveOnlyFunction(ret);
     add_tests_AudioInfo(ret);
     add_tests_ChannelMixerMatrix(ret);
     add_tests_FFTStreamer(ret);
@@ -250,10 +254,12 @@ void UnitTestRunner::program(ProgramEnvironment& env, CancellableScope& scope){
         m_env = nullptr;
     });
 
+    //  Uncapped pool: the runner caps the # of concurrently running tests itself, and
+    //  dispatch_now_blocking() would stall the dispatcher once a capped pool saturates.
     PokemonAutomation::UnitTestRunner runner(
         &scope,
         env.logger(),
-        GlobalThreadPools::computation_normal()
+        GlobalThreadPools::unlimited_normal()
     );
     runner.add_listener(*this);
 
@@ -368,9 +374,11 @@ bool CommandLineUnitTestRunner::run(bool augment_color_distortions){
         m_logger.log("Color distortion augmentation enabled. Image tests with labeled images also run with: " + labels);
     }
 
+    //  Uncapped pool: the runner caps the # of concurrently running tests itself, and
+    //  dispatch_now_blocking() would stall the dispatcher once a capped pool saturates.
     PokemonAutomation::UnitTestRunner runner(
         m_logger,
-        GlobalThreadPools::computation_normal()
+        GlobalThreadPools::unlimited_normal()
     );
     runner.add_listener(*this);
     for (const auto& test : UNIT_TESTS_ALL()){

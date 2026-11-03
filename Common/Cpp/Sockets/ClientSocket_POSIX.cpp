@@ -119,11 +119,23 @@ void ClientSocket_POSIX::close_socket_locked(){
     }
 }
 
-size_t ClientSocket_POSIX::send(const void* data, size_t bytes){
+size_t ClientSocket_POSIX::send(const void* data, size_t bytes, std::chrono::milliseconds timeout){
     const char* ptr = (const char*)data;
     size_t sent = 0;
 
+    //  "time_point::max()" (the infinite default) is never reached; using
+    //  it also avoids overflowing "now() + timeout".
+    const std::chrono::steady_clock::time_point deadline =
+        (timeout == std::chrono::milliseconds::max())
+            ? std::chrono::steady_clock::time_point::max()
+            : std::chrono::steady_clock::now() + timeout;
+
     while (bytes > 0 && state() == State::CONNECTED){
+        if (std::chrono::steady_clock::now() >= deadline){
+            //  The deadline elapsed with bytes still unwritten; the
+            //  connection is still fine, so just report the partial count.
+            return sent;
+        }
         int socket = m_socket.load(std::memory_order_acquire);
         if (socket == -1){
             return sent;
@@ -133,10 +145,11 @@ size_t ClientSocket_POSIX::send(const void* data, size_t bytes){
         size_t current = std::min<size_t>(bytes, BLOCK_SIZE);
         ssize_t current_sent = ::send(socket, ptr, (int)current, MSG_DONTWAIT | MSG_NOSIGNAL);
         if (current_sent != -1){
+            //  send() may return after writing only part of the
+            //  buffer (macOS does this when the kernel's send
+            //  buffer is full); loop until everything has been
+            //  written, the same way the Qt backend does.
             sent += current_sent;
-            if ((size_t)current_sent < current){
-                return sent;
-            }
             ptr += current_sent;
             bytes -= current_sent;
             continue;
@@ -201,8 +214,6 @@ void ClientSocket_POSIX::thread_loop_internal(std::string address, uint16_t port
     m_listeners.run_method(&Listener::on_thread_start);
 
     {
-        std::unique_lock<Mutex> lg(m_lock);
-
         sockaddr_in server;
         std::memset(&server, 0, sizeof(server));
         server.sin_family = AF_INET;
@@ -210,16 +221,27 @@ void ClientSocket_POSIX::thread_loop_internal(std::string address, uint16_t port
         server.sin_addr.s_addr = inet_addr(address.c_str());
 
         //  Connect
-        int socket = m_socket.load(std::memory_order_acquire);
+        int socket;
+        {
+            std::lock_guard<Mutex> lg(m_lock);
+            socket = m_socket.load(std::memory_order_acquire);
+        }
         if (socket == -1){
             return;
         }
 
         bool in_progress = false;
         while (true){
-            State state = m_state.load(std::memory_order_relaxed);
-            if (state == State::DESTRUCTING){
-                return;
+            //  The lock must not be held across the connect wait: a
+            //  connect to a host that drops SYNs can take the kernel
+            //  over two minutes to fail, and "close()" needs the lock to
+            //  set DESTRUCTING. Hold it only for the state check (the
+            //  same way the server's accept loop does it).
+            {
+                std::lock_guard<Mutex> lg(m_lock);
+                if (m_state.load(std::memory_order_relaxed) == State::DESTRUCTING){
+                    return;
+                }
             }
 
             if (!in_progress){
@@ -231,6 +253,7 @@ void ClientSocket_POSIX::thread_loop_internal(std::string address, uint16_t port
                 int error = errno;
 //                    cout << "error = " << error << endl;
                 if (error != EAGAIN && error != EALREADY && error != EINPROGRESS){
+                    std::unique_lock<Mutex> lg(m_lock);
                     if (error == ETIMEDOUT){
                         connection_lost_locked(lg, "Connection timed out.", false);
                     }else{
@@ -251,6 +274,7 @@ void ClientSocket_POSIX::thread_loop_internal(std::string address, uint16_t port
             int pret = poll(&pf, 1, 10);
             if (pret == -1){
                 if (errno != EINTR){
+                    std::unique_lock<Mutex> lg(m_lock);
                     connection_lost_locked(lg, "poll() error: " + std::string(strerror(errno)), false);
                     return;
                 }
@@ -268,6 +292,7 @@ void ClientSocket_POSIX::thread_loop_internal(std::string address, uint16_t port
             if (so_error == 0){
                 break;
             }
+            std::unique_lock<Mutex> lg(m_lock);
             if (so_error == ETIMEDOUT){
                 connection_lost_locked(lg, "Connection timed out.", false);
             }else if (so_error == ECONNREFUSED){
@@ -278,7 +303,15 @@ void ClientSocket_POSIX::thread_loop_internal(std::string address, uint16_t port
             return;
         }
 
-        m_state.store(State::CONNECTED, std::memory_order_relaxed);
+        {
+            std::lock_guard<Mutex> lg(m_lock);
+            //  "close()" may have set DESTRUCTING while the connect was
+            //  in progress. Keep that state so the receive loop exits
+            //  immediately instead of marking the socket CONNECTED.
+            if (m_state.load(std::memory_order_relaxed) != State::DESTRUCTING){
+                m_state.store(State::CONNECTED, std::memory_order_relaxed);
+            }
+        }
     }
 
     m_listeners.run_method(&Listener::on_connect_finished, "");

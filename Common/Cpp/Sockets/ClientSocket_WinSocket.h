@@ -8,8 +8,9 @@
 #define PokemonAutomation_ClientSocket_WinSocket_H
 
 #include <atomic>
+#include <chrono>
 #include <mutex>
-#include <winsock.h>
+#include <winsock2.h>
 #include "Common/Cpp/Concurrency/Mutex.h"
 #include "Common/Cpp/Concurrency/ConditionVariable.h"
 #include "Common/Cpp/Concurrency/AsyncTask.h"
@@ -36,13 +37,21 @@ public:
     //  State::NOT_RUNNING so "connect()" can be called again. This is safe to
     //  call multiple times.
     //
+    //  It cancels an in-flight "send()": the send loop re-checks the state
+    //  every iteration, and "close()" notifies it, so the send returns within
+    //  a millisecond with the bytes written so far.
+    //
     //  This blocks until the receive thread has exited, so it must not be
     //  called from within a listener callback (which runs on that thread).
     virtual void close() noexcept override;
 
     virtual void connect(const std::string& address, uint16_t port) override;
 
-    virtual size_t send(const void* data, size_t bytes) override;
+    virtual size_t send(
+        const void* data,
+        size_t bytes,
+        std::chrono::milliseconds timeout = std::chrono::milliseconds::max()
+    ) override;
 
 
 private:

@@ -7,10 +7,11 @@
 #ifndef PokemonAutomation_ClientSocket_Qt_H
 #define PokemonAutomation_ClientSocket_Qt_H
 
+#include <chrono>
 #include <string>
-#include <atomic>
-#include <condition_variable>
+#include <vector>
 #include <QObject>
+#include <QSharedPointer>
 #include "Common/Cpp/Concurrency/Mutex.h"
 #include "Common/Cpp/Concurrency/ConditionVariable.h"
 #include "AbstractClientSocket.h"
@@ -28,11 +29,24 @@ class ClientSocket_Qt final : public QObject, public AbstractClientSocket{
 
     struct SendData{
         std::string packet;
+        //  The event-thread write loop stops at this deadline, so a send
+        //  that can never complete (a peer that never reads) cannot pin
+        //  the socket's event thread forever and block "close()". "max()"
+        //  means no deadline (the infinite default).
+        std::chrono::steady_clock::time_point deadline = std::chrono::steady_clock::time_point::max();
+        //  The running byte count: the write loop updates it as it goes,
+        //  so "close()" cancelling the send mid-write can report the
+        //  bytes written so far (best effort).
         size_t bytes_sent = 0;
+        //  Set by "close()"/"connect()" when they cancel the send; the
+        //  queued write loop then finishes without writing.
+        bool cancelled = false;
+        //  Set when the event-thread write loop finishes or when
+        //  "close()"/"connect()" cancel the send.
         bool done = false;
 
         Mutex lock;
-        std::condition_variable cv;
+        ConditionVariable cv;
     };
 
 
@@ -49,6 +63,10 @@ public:
     //  callback is finished by the time it returns. It is safe to call
     //  multiple times.
     //
+    //  It cancels the in-flight "send()" calls: their callers return
+    //  promptly with the number of bytes actually written so far (best
+    //  effort), instead of waiting for the event thread to finish them.
+    //
     //  This must not be called from within a listener callback, since the
     //  callbacks run on the QTcpSocket's event thread and this destroys the
     //  socket that is running them.
@@ -56,12 +74,16 @@ public:
 
     virtual void connect(const std::string& address, uint16_t port) override;
 
-    virtual size_t send(const void* data, size_t bytes) override;
+    virtual size_t send(
+        const void* data,
+        size_t bytes,
+        std::chrono::milliseconds timeout = std::chrono::milliseconds::max()
+    ) override;
 
 
 signals:
     void internal_connect(const std::string& address, uint16_t port);
-    void internal_send(SendData* send_data);
+    void internal_send(QSharedPointer<SendData> send_data);
 
 
 private:
@@ -75,16 +97,27 @@ private:
     //  Runs on the QTcpSocket's event thread.
     void connection_failed(const std::string& error_message);
 
+    //  Cancels the in-flight "send()" calls: marks them done so their
+    //  callers return promptly with the bytes written so far (best
+    //  effort). The queued write loops finish without writing. The
+    //  shared ownership keeps each packet alive until its queued call
+    //  runs (or is discarded with the socket).
+    void cancel_inflight_sends();
+
     std::unique_ptr<QTcpSocket> make_socket();
 
 
 private:
     Mutex m_lock;
-    ConditionVariable m_cv;
 
     QTcpSocket* m_socket = nullptr;
     bool m_success_pending = false;
-    std::atomic<int> m_sends_in_flight{0};
+
+    //  The "send()" calls that are queued on the event thread but not
+    //  finished yet, so that "close()"/"connect()" can cancel them (and
+    //  wake their callers) before the socket is destroyed. The write
+    //  loops remove their entry when they finish. Protected by m_lock.
+    std::vector<QSharedPointer<SendData>> m_inflight_sends;
 };
 
 

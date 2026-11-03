@@ -1,4 +1,4 @@
-﻿/*  Stats Reader
+/*  Stats Reader
  *
  *  From: https://github.com/PokemonAutomation/
  *
@@ -104,6 +104,13 @@ bool StatsReader::read_name(
 
     if (!result.results.empty()){
         stats.name = result.results.begin()->second.token;
+        if (stats.name != "nidoran-f" && stats.name != "nidoran-m"){
+            return true;
+        }
+        const std::string symbol_name = read_nidoran_symbol(preprocess_for_ocr(name_box, 3, 1), DARK_TEXT_FILTERS());
+        if (!symbol_name.empty() && (subset.empty() || subset.contains(symbol_name))){
+            stats.name = symbol_name;
+        }
         return true;
     }
     logger.log("Failed to read species name.", COLOR_RED);
@@ -435,7 +442,10 @@ class Test_StatsReaderPage1 : public ImageUnitTest{
 public:
     Test_StatsReaderPage1(const std::string& image)
         : ImageUnitTest("PokemonFRLG::StatsReader - page1 - " + image, {image})
-    {}
+    {
+        //  Plus the PaddleOCR (ONNX) recognition session and its working set.
+        m_memory += PADDLE_OCR_SINGLE_LINE_MEMORY_ESTIMATE;
+    }
 
     virtual UnitTestResult run_on_images(
         Logger& logger, CancellableScope& scope,
@@ -470,7 +480,10 @@ class Test_StatsReaderPage2 : public ImageUnitTest{
 public:
     Test_StatsReaderPage2(const std::string& image)
         : ImageUnitTest("PokemonFRLG::StatsReader - page2 - " + image, {image})
-    {}
+    {
+        //  Plus the PaddleOCR (ONNX) recognition session and its working set.
+        m_memory += PADDLE_OCR_SINGLE_LINE_MEMORY_ESTIMATE;
+    }
 
     virtual UnitTestResult run_on_images(
         Logger& logger, CancellableScope& scope,
@@ -517,6 +530,7 @@ void add_tests_StatsReader(UnitTestDatabase& database){
     database.add<Test_StatsReaderPage1>("PokemonFRLG/StatsReader/Page1/horsea_3_deu.png");
     database.add<Test_StatsReaderPage1>("PokemonFRLG/StatsReader/Page1/magikarp_1_spa.png");
     database.add<Test_StatsReaderPage1>("PokemonFRLG/StatsReader/Page1/moltres_1_eng.png");
+    database.add<Test_StatsReaderPage1>("PokemonFRLG/StatsReader/Page1/nidoran_m_eng.png");
     database.add<Test_StatsReaderPage1>("PokemonFRLG/StatsReader/Page1/pidgey_1_ita.png");
     database.add<Test_StatsReaderPage1>("PokemonFRLG/StatsReader/Page1/venonat_4k_eng.png");
     database.add<Test_StatsReaderPage2>("PokemonFRLG/StatsReader/Page2/abra_1_deu.png");
